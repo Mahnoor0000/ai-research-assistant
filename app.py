@@ -4,146 +4,204 @@ from research_assistant import (
     generate_fast_report,
     answer_question_about_paper,
     extract_pdf_text,
-    generate_report_from_pdf
+    generate_report_from_pdf,
+    answer_question_about_pdf,
+    generate_code,
 )
 
-# =====================================================
-#                    PAGE CONFIG
-# =====================================================
+# ============================================
+#           STREAMLIT PAGE CONFIG
+# ============================================
 st.set_page_config(
     page_title="AI Research Assistant",
     layout="wide",
-    page_icon="🤖"
+    page_icon="🤖",
 )
 
-# Custom Styling
-st.markdown("""
-<style>
-    .main-title {
-        font-size: 42px !important;
-        font-weight: 700 !important;
-        color: #4DB6AC;
-        text-align: center;
-        padding-bottom: 20px;
-    }
-    .sub-section-title {
-        font-size: 26px !important;
-        font-weight: 600 !important;
-        color: #81D4FA;
-        padding-top: 20px;
-    }
-    .stTextInput>div>div>input {
-        border-radius: 10px;
-    }
-</style>
-""", unsafe_allow_html=True)
+st.title("🤖 AI Research Assistant")
+st.write(
+    "A simple demo of a **multi-agent research system** using:\n"
+    "- Search Agent (Semantic Scholar)\n"
+    "- Reporter Agent (summaries & reports)\n"
+    "- PDF Agent (text extraction & reporting)\n"
+    "- Q&A Agent (question answering)\n"
+    "- Code Generation Agent (Groq LLaMA 3.3 70B)"
+)
+st.markdown("---")
 
-# =====================================================
-#                    MAIN TITLE
-# =====================================================
-st.markdown("<div class='main-title'>🤖 AI Research Paper Assistant</div>", unsafe_allow_html=True)
-st.write("A multi-agent research assistant powered by **Semantic Scholar**, **Ollama LLMs**, and **AutoGen Agents**.")
-
-# =====================================================
+# ============================================
 #                    TABS
-# =====================================================
-tab1, tab2, tab3 = st.tabs(["🔎 Search Papers", "        📄 PDF Upload", "       ❓ Q&A"])
+# ============================================
+tab1, tab2, tab3, tab4 = st.tabs(
+    [
+        "🔍 Search Papers",
+        "📄 PDF Upload",
+        "❓ Q&A (Paper/PDF)",
+        "💻 Code Generator",
+    ]
+)
 
-# =====================================================
-#              TAB 1 — SEARCH PAPERS
-# =====================================================
+# =========================================================
+# TAB 1 — SEARCH PAPERS
+# =========================================================
 with tab1:
+    st.header("🔍 Search Research Papers (Search Agent)")
 
-    st.markdown("<div class='sub-section-title'>🔎 Search Research Papers</div>", unsafe_allow_html=True)
+    topic = st.text_input(
+        "Enter a research topic:",
+        placeholder="e.g., CNN, Transformers, Reinforcement Learning",
+        key="search_topic",
+    )
 
-    query = st.text_input("Enter a research topic:", placeholder="e.g., CNN, Transformers, Quantum ML...")
-
-    if st.button("Search Papers"):
-        if not query.strip():
+    if st.button("Search", key="search_button"):
+        if not topic.strip():
             st.warning("Please enter a topic.")
         else:
-            with st.spinner("🔍 Search Agent is searching Semantic Scholar..."):
-                papers = search_semantic_scholar(query)
+            with st.spinner("Searching Semantic Scholar (Search Agent)..."):
+                papers = search_semantic_scholar(topic)
 
             if not papers:
-                st.error("No papers found for this topic.")
+                st.error("No papers found.")
             else:
                 st.session_state["papers"] = papers
-                st.success(f"Found {len(papers)} relevant papers!")
+                st.success(f"Found {len(papers)} papers!")
 
-
-    # -------------------------- Results --------------------------
     if "papers" in st.session_state:
-
         papers = st.session_state["papers"]
+        titles = [f"{i+1}. {p['title']}" for i, p in enumerate(papers)]
 
-        st.markdown("<div class='sub-section-title'>📄 Select a Paper</div>", unsafe_allow_html=True)
+        index = st.selectbox(
+            "Select a paper:", range(len(papers)), format_func=lambda x: titles[x]
+        )
+        paper = papers[index]
 
-        paper_titles = [f"{i+1}. {p['title']}" for i, p in enumerate(papers)]
+        st.subheader("📘 Paper Details")
+        st.write(f"**Title:** {paper['title']}")
+        st.write(f"**Authors:** {', '.join(paper['authors'])}")
+        if paper["url"]:
+            st.write(f"[🔗 View Paper]({paper['url']})")
 
-        selected_index = st.selectbox("Choose a paper:", range(len(papers)),
-                                      format_func=lambda x: paper_titles[x])
+        if st.button("📝 Generate Report (Reporter Agent)", key="report_button"):
+            with st.spinner("Reporter Agent generating report via Groq..."):
+                report = generate_fast_report(paper)
 
-        selected_paper = papers[selected_index]
-
-        # Paper Info
-        st.write("### 📘 Paper Details")
-        st.write(f"**Title:** {selected_paper['title']}")
-        st.write(f"**Authors:** {', '.join(selected_paper['authors'])}")
-        if selected_paper["url"]:
-            st.write(f"[🔗 View Paper]({selected_paper['url']})")
-
-        # -------------------------- Report Button --------------------------
-        if st.button("📝 Generate Research Report"):
-            with st.spinner("🧠 Reporter Agent is generating the report..."):
-                report = generate_fast_report(selected_paper)
-
-            st.subheader("📑 Research Report")
+            st.subheader("📄 Research Report")
             st.markdown(report)
 
 
-# =====================================================
-#              TAB 2 — PDF UPLOAD
-# =====================================================
+# =========================================================
+# TAB 2 — PDF UPLOAD
+# =========================================================
 with tab2:
+    st.header("📄 Upload a Research PDF (PDF Agent + Reporter Agent)")
 
-    st.markdown("<div class='sub-section-title'>📄 Upload Research PDF</div>", unsafe_allow_html=True)
+    pdf = st.file_uploader("Choose a PDF file", type=["pdf"], key="pdf_uploader")
 
-    pdf_file = st.file_uploader("Upload PDF file", type=["pdf"])
+    if pdf:
+        with st.spinner("PDF Agent extracting text..."):
+            pdf_text = extract_pdf_text(pdf)
 
-    if pdf_file is not None:
-        with st.spinner("📘 PDF Agent is extracting text..."):
-            pdf_text = extract_pdf_text(pdf_file)
+        st.session_state["pdf_text"] = pdf_text
+        st.success("PDF text extracted successfully!")
 
-        st.success("PDF text extracted successfully! 🎉")
-
-        if st.button("📝 Generate Report from PDF"):
-            with st.spinner("🧠 Reporter Agent is generating the report..."):
+        if st.button("📝 Generate Report from PDF", key="pdf_report_button"):
+            with st.spinner("Reporter Agent generating PDF-based report..."):
                 pdf_report = generate_report_from_pdf(pdf_text)
 
-            st.subheader("📑 Research Report (From PDF)")
+            st.subheader("📄 Research Report (From PDF)")
             st.markdown(pdf_report)
 
 
-# =====================================================
-#              TAB 3 — QUESTION ANSWERING
-# =====================================================
+# =========================================================
+# TAB 3 — Q&A (Paper / PDF)
+# =========================================================
 with tab3:
+    st.header("❓ Q&A Agent")
 
-    st.markdown("<div class='sub-section-title'>❓ Ask a Question About a Paper</div>", unsafe_allow_html=True)
+    qa_mode = st.radio(
+        "Choose context for Q&A:",
+        ["Searched Paper Abstract", "Uploaded PDF Text"],
+        key="qa_mode",
+    )
 
-    if "papers" not in st.session_state:
-        st.info("🔍 Please search for a paper first in the 'Search Papers' tab.")
-    else:
-        selected_paper = st.session_state["papers"][0]   # default first paper
-        question = st.text_input("Enter your question:", placeholder="e.g., What dataset was used?")
+    if qa_mode == "Searched Paper Abstract":
+        if "papers" not in st.session_state:
+            st.info("Please search for a paper first in the 'Search Papers' tab.")
+        else:
+            papers = st.session_state["papers"]
+            titles = [f"{i+1}. {p['title']}" for i, p in enumerate(papers)]
+            idx = st.selectbox(
+                "Select paper for Q&A:",
+                range(len(papers)),
+                format_func=lambda x: titles[x],
+                key="qa_paper_select",
+            )
+            selected_paper = papers[idx]
 
-        if st.button("Ask"):
-            if not question.strip():
-                st.warning("Please enter a valid question.")
-            else:
-                with st.spinner("💬 Q&A Agent is answering..."):
-                    answer = answer_question_about_paper(selected_paper, question)
+            question = st.text_input(
+                "Your question about this paper:",
+                placeholder="e.g., What is the main contribution?",
+                key="paper_question",
+            )
 
-                st.subheader("🧠 Answer")
-                st.write(answer)
+            if st.button("Ask (Paper)", key="ask_paper_button"):
+                if not question.strip():
+                    st.warning("Enter a question.")
+                else:
+                    with st.spinner("Q&A Agent answering from abstract..."):
+                        answer = answer_question_about_paper(selected_paper, question)
+
+                    st.subheader("🧠 Answer")
+                    st.write(answer)
+
+    else:  # Uploaded PDF Text
+        if "pdf_text" not in st.session_state:
+            st.info("Please upload a PDF first in the 'PDF Upload' tab.")
+        else:
+            pdf_question = st.text_input(
+                "Your question about the uploaded PDF:",
+                placeholder="e.g., What dataset is used? What is the main result?",
+                key="pdf_question",
+            )
+
+            if st.button("Ask (PDF)", key="ask_pdf_button"):
+                if not pdf_question.strip():
+                    st.warning("Enter a question.")
+                else:
+                    with st.spinner("Q&A Agent answering from PDF text..."):
+                        answer = answer_question_about_pdf(
+                            st.session_state["pdf_text"], pdf_question
+                        )
+
+                    st.subheader("🧠 Answer")
+                    st.write(answer)
+
+
+# =========================================================
+# TAB 4 — CODE GENERATOR
+# =========================================================
+with tab4:
+    st.header("💻 Code Generation Agent")
+
+    code_instruction = st.text_area(
+        "Describe the code you want:",
+        placeholder=(
+            "Examples:\n"
+            "- Write a Python function to implement bubble sort.\n"
+            "- Generate a PyTorch CNN model for CIFAR-10.\n"
+            "- Create a FastAPI endpoint that returns JSON.\n"
+        ),
+        key="code_instruction",
+        height=200,
+    )
+
+    if st.button("Generate Code", key="generate_code_button"):
+        if not code_instruction.strip():
+            st.warning("Please describe the code you want.")
+        else:
+            with st.spinner("Code Agent generating code via Groq..."):
+                code_result = generate_code(code_instruction)
+
+            st.subheader("🧠 Generated Code")
+            # Just show whatever the model returns; it may already contain ``` fences
+            st.code(code_result, language="python")
