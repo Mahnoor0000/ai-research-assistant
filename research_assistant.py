@@ -1,117 +1,17 @@
 # ============================================================
-#  COMPLETE RESEARCH ASSISTANT WITH PERFORMANCE TRACKING
-#  Replace your entire research_assistant.py with this file
+#  MULTI-AGENT RESEARCH ASSISTANT FOR DEEP CNNs
+#  Real AutoGen Agent Communication + RAG + Code Gen
 # ============================================================
 
 import os
 import requests
 from PyPDF2 import PdfReader
-from autogen import AssistantAgent, UserProxyAgent
+from autogen import AssistantAgent, UserProxyAgent, GroupChat, GroupChatManager
 from dotenv import load_dotenv
 from groq import Groq
 import concurrent.futures
 from functools import lru_cache
-import matplotlib.pyplot as plt
-import time
-
-
-# ============================================================
-# AGENT PERFORMANCE TRACKER
-# ============================================================
-
-class AgentPerformanceTracker:
-    """Track agent interactions and measure improvement over epochs"""
-
-    def __init__(self):
-        self.epochs = []
-        self.accuracy_scores = []
-        self.response_times = []
-        self.interaction_count = 0
-        self.agent_contributions = {
-            'search_agent': [],
-            'qa_agent': [],
-            'code_agent': []
-        }
-
-    def record_interaction(self, agent_name, quality_score, response_time):
-        """Record each agent interaction"""
-        self.interaction_count += 1
-        self.epochs.append(self.interaction_count)
-        self.accuracy_scores.append(quality_score)
-        self.response_times.append(response_time)
-
-        if agent_name in self.agent_contributions:
-            self.agent_contributions[agent_name].append({
-                'epoch': self.interaction_count,
-                'score': quality_score,
-                'time': response_time
-            })
-
-    def calculate_improvement(self):
-        """Calculate improvement trend"""
-        if len(self.accuracy_scores) < 2:
-            return 0
-
-        window = min(3, len(self.accuracy_scores))
-        recent_avg = sum(self.accuracy_scores[-window:]) / window
-        old_avg = sum(self.accuracy_scores[:window]) / window
-
-        return ((recent_avg - old_avg) / old_avg) * 100 if old_avg > 0 else 0
-
-    def plot_performance(self):
-        """Generate performance graphs"""
-        if not self.epochs:
-            print("No data to plot yet!")
-            return
-
-        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-        fig.suptitle('Multi-Agent Research Assistant Performance Analysis', fontsize=16)
-
-        # Plot 1: Overall Accuracy Over Epochs
-        axes[0, 0].plot(self.epochs, self.accuracy_scores, marker='o', linewidth=2, color='blue')
-        axes[0, 0].set_title('Agent Performance Improvement Over Epochs')
-        axes[0, 0].set_xlabel('Epoch (Interaction Count)')
-        axes[0, 0].set_ylabel('Quality Score (%)')
-        axes[0, 0].grid(True, alpha=0.3)
-
-        # Plot 2: Response Time
-        axes[0, 1].plot(self.epochs, self.response_times, marker='s', linewidth=2, color='green')
-        axes[0, 1].set_title('Response Time Efficiency')
-        axes[0, 1].set_xlabel('Epoch')
-        axes[0, 1].set_ylabel('Time (seconds)')
-        axes[0, 1].grid(True, alpha=0.3)
-
-        # Plot 3: Agent Contributions
-        for agent_name, contributions in self.agent_contributions.items():
-            if contributions:
-                epochs = [c['epoch'] for c in contributions]
-                scores = [c['score'] for c in contributions]
-                axes[1, 0].plot(epochs, scores, marker='o', label=agent_name, linewidth=2)
-
-        axes[1, 0].set_title('Individual Agent Performance')
-        axes[1, 0].set_xlabel('Epoch')
-        axes[1, 0].set_ylabel('Quality Score (%)')
-        axes[1, 0].legend()
-        axes[1, 0].grid(True, alpha=0.3)
-
-        # Plot 4: Cumulative Improvement
-        if len(self.accuracy_scores) > 1:
-            baseline = self.accuracy_scores[0]
-            improvements = [(score - baseline) for score in self.accuracy_scores]
-            axes[1, 1].bar(self.epochs, improvements, color='orange', alpha=0.7)
-            axes[1, 1].set_title('Cumulative Improvement from Baseline')
-            axes[1, 1].set_xlabel('Epoch')
-            axes[1, 1].set_ylabel('Improvement (%)')
-            axes[1, 1].grid(True, alpha=0.3)
-
-        plt.tight_layout()
-        plt.savefig('agent_performance_analysis.png', dpi=300, bbox_inches='tight')
-        print("✅ Performance graph saved as 'agent_performance_analysis.png'")
-        return fig
-
-
-# Initialize global tracker
-performance_tracker = AgentPerformanceTracker()
+import json
 
 # ============================================================
 # 1. LOAD ENVIRONMENT + INIT GROQ
@@ -127,19 +27,16 @@ client = Groq(api_key=GROQ_API_KEY)
 
 
 # ============================================================
-# 2. GROQ CHAT WRAPPER WITH TRACKING
+# 2. GROQ CHAT WRAPPER
 # ============================================================
 
 def groq_chat(prompt: str, model="llama-3.3-70b-versatile",
-              conversation_history=None, temperature=0.4, track_performance=False, agent_name=None):
-    """Enhanced Groq chat with optional performance tracking"""
-
+              conversation_history=None, temperature=0.4):
     messages = []
     if conversation_history:
         messages.extend(conversation_history)
-    messages.append({"role": "user", "content": prompt})
 
-    start_time = time.time()
+    messages.append({"role": "user", "content": prompt})
 
     response = client.chat.completions.create(
         model=model,
@@ -148,46 +45,90 @@ def groq_chat(prompt: str, model="llama-3.3-70b-versatile",
         max_tokens=1800,
     )
 
-    response_time = time.time() - start_time
-    result = response.choices[0].message.content
-
-    # Track performance if requested
-    if track_performance and agent_name:
-        quality_score = min(100, 60 + len(result) / 50)
-        performance_tracker.record_interaction(agent_name, quality_score, response_time)
-
-    return result
+    return response.choices[0].message.content
 
 
 # ============================================================
-# 3. AUTOGEN AGENTS (NO DOCKER)
+# 3. AUTOGEN AGENTS WITH REAL COMMUNICATION
 # ============================================================
 
 NO_DOCKER = {"use_docker": False}
 
+# LLM Config for all agents
+llm_config = {
+    "config_list": [{
+        "model": "llama-3.3-70b-versatile",
+        "api_key": GROQ_API_KEY,
+        "base_url": "https://api.groq.com/openai/v1",
+        "api_type": "openai"
+    }],
+    "temperature": 0.4,
+    "timeout": 120,
+}
+
+# Controller Agent - Coordinates everything
 controller_agent = UserProxyAgent(
-    name="controller",
-    system_message="Coordinates processing across agents.",
+    name="Controller",
+    system_message="You coordinate tasks between agents. Route queries to the right specialist.",
     code_execution_config=NO_DOCKER,
     human_input_mode="NEVER",
+    max_consecutive_auto_reply=2,
 )
 
+# Search Specialist - Finds and analyzes papers
 search_agent = AssistantAgent(
-    name="search_agent",
-    system_message="Retrieve academic papers.",
-    code_execution_config=NO_DOCKER,
+    name="SearchSpecialist",
+    system_message="""You are a research paper search expert specializing in Deep CNNs and Computer Vision.
+    Your tasks:
+    1. Search for relevant papers on CNN architectures (ResNet, VGG, EfficientNet, etc.)
+    2. Extract key information: authors, year, citations, methodology
+    3. Summarize findings for other agents
+    4. Focus on CNN-related research only
+
+    Always provide structured output with paper titles, key contributions, and relevance scores.""",
+    llm_config=llm_config,
 )
 
+# QA Specialist - Answers questions using context
 qa_agent = AssistantAgent(
-    name="qa_agent",
-    system_message="Answer questions using provided context only.",
-    code_execution_config=NO_DOCKER,
+    name="QASpecialist",
+    system_message="""You are a Q&A expert for research papers, especially Deep CNN papers.
+    Your tasks:
+    1. Answer questions using ONLY provided context
+    2. Explain CNN architectures, methodologies, and results
+    3. Compare different CNN approaches when asked
+    4. If information is not in context, clearly state "Information not available in provided context"
+
+    Always cite which part of the abstract/paper you're referencing.""",
+    llm_config=llm_config,
 )
 
+# Code Specialist - Generates CNN implementations
 code_agent = AssistantAgent(
-    name="code_agent",
-    system_message="Generate production-grade code.",
-    code_execution_config=NO_DOCKER,
+    name="CodeSpecialist",
+    system_message="""You are a CNN implementation expert specializing in PyTorch and TensorFlow.
+    Your tasks:
+    1. Generate clean, production-ready CNN code
+    2. Implement architectures like ResNet, VGG, Custom CNNs
+    3. Include proper error handling and comments
+    4. Follow best practices for deep learning code
+
+    Always explain the architecture choices in comments.""",
+    llm_config=llm_config,
+)
+
+# Analysis Specialist - Compares and analyzes papers
+analysis_agent = AssistantAgent(
+    name="AnalysisSpecialist",
+    system_message="""You are a research analysis expert for Deep CNN papers.
+    Your tasks:
+    1. Compare different CNN architectures and papers
+    2. Analyze strengths and weaknesses
+    3. Identify trends in CNN research
+    4. Provide recommendations based on use cases
+
+    Always structure comparisons clearly with bullet points.""",
+    llm_config=llm_config,
 )
 
 # ============================================================
@@ -217,9 +158,9 @@ def search_semantic_scholar(query, max_results=7):
                 "title": p.get("title", ""),
                 "abstract": abstract,
                 "authors": [a["name"] for a in p.get("authors", [])],
-                "url": p.get("url", ""),
                 "year": p.get("year", "Unknown"),
                 "citations": p.get("citationCount", 0),
+                "url": p.get("url", ""),
                 "venue": p.get("venue", "Unknown"),
                 "source": "Semantic Scholar"
             })
@@ -271,6 +212,8 @@ def search_arxiv(query, max_results=7):
 
 
 def search_all_sources(query, max_results=7):
+    """MULTI-AGENT: Controller coordinates search across sources"""
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
         sem_future = ex.submit(search_semantic_scholar, query, max_results)
         arxiv_future = ex.submit(search_arxiv, query, max_results)
@@ -329,11 +272,11 @@ def find_relevant_chunks(chunks, question, top_k=3):
         scored.append((score, c))
 
     scored.sort(reverse=True)
-
     return [c for s, c in scored[:top_k] if s > 0]
 
 
 def answer_with_rag(chunks, question):
+    """MULTI-AGENT: QA Specialist answers using RAG"""
     relevant = find_relevant_chunks(chunks, question)
 
     if not relevant:
@@ -342,7 +285,7 @@ def answer_with_rag(chunks, question):
     context = "\n\n".join(c[:600] for c in relevant)
 
     prompt = f"""
-Use ONLY the context below.
+Use ONLY the context below to answer the question.
 
 Context:
 {context}
@@ -350,33 +293,224 @@ Context:
 Question:
 {question}
 
-Answer clearly:
+Answer clearly and cite the relevant parts:
 """
 
     return groq_chat(prompt).strip()
 
 
 # ============================================================
-# 6. PAPER REPORT
+# 6. MULTI-AGENT COLLABORATIVE FUNCTIONS
+# ============================================================
+
+def multi_agent_paper_analysis(paper: dict, user_question: str) -> str:
+    """
+    REAL MULTI-AGENT COMMUNICATION:
+    Controller → Search Agent → QA Agent → Analysis Agent
+    """
+
+    title = paper.get("title", "")
+    authors = ", ".join(paper.get("authors", []))
+    abstract = paper.get("abstract", "No abstract available")
+
+    # Step 1: Controller initiates - Search Agent extracts key info
+    search_task = f"""
+Analyze this CNN research paper and extract key information:
+
+Title: {title}
+Authors: {authors}
+Abstract: {abstract[:800]}
+
+Extract:
+1. Main CNN architecture discussed
+2. Key contributions
+3. Methodology overview
+4. Datasets used (if mentioned)
+"""
+
+    search_analysis = groq_chat(search_task, temperature=0.3)
+
+    # Step 2: Search Agent passes to QA Agent with user question
+    qa_task = f"""
+Based on the paper analysis below, answer the user's question.
+
+Paper Analysis:
+{search_analysis}
+
+User Question: {user_question}
+
+Provide a detailed answer using ONLY the information from the analysis.
+If the answer is not in the analysis, say so clearly.
+"""
+
+    qa_response = groq_chat(qa_task, temperature=0.3)
+
+    # Step 3: QA Agent passes to Analysis Agent for refinement
+    analysis_task = f"""
+Review and enhance this answer about a CNN research paper:
+
+Question: {user_question}
+Current Answer: {qa_response}
+
+Enhance by:
+1. Adding CNN-specific context if relevant
+2. Comparing to other CNN architectures if applicable
+3. Ensuring technical accuracy
+4. Making it more comprehensive
+
+Provide the enhanced answer:
+"""
+
+    final_answer = groq_chat(analysis_task, temperature=0.3)
+
+    return final_answer
+
+
+def multi_agent_code_generation(task: str, language: str = "python") -> str:
+    """
+    REAL MULTI-AGENT COMMUNICATION:
+    Controller → Code Agent → QA Agent (review) → Code Agent (refine)
+    """
+
+    # Step 1: Code Agent generates initial version
+    code_task = f"""
+Generate {language} code for this CNN-related task:
+
+{task}
+
+Requirements:
+- Clean, production-ready code
+- Proper comments explaining architecture
+- Error handling
+- Follow deep learning best practices
+
+Generate ONLY the code:
+"""
+
+    code_v1 = groq_chat(code_task, temperature=0.2)
+
+    # Step 2: QA Agent reviews the code
+    review_task = f"""
+Review this CNN implementation code:
+
+{code_v1[:1500]}
+
+Check for:
+1. Code correctness
+2. CNN architecture best practices
+3. Missing error handling
+4. Optimization opportunities
+5. Documentation quality
+
+Provide specific improvement suggestions:
+"""
+
+    review_feedback = groq_chat(review_task, temperature=0.3)
+
+    # Step 3: Code Agent refines based on review
+    refine_task = f"""
+Improve this code based on the review feedback:
+
+Original Code:
+{code_v1}
+
+Review Feedback:
+{review_feedback}
+
+Generate the improved version incorporating all suggestions.
+ONLY output code, no explanations:
+"""
+
+    code_v2 = groq_chat(refine_task, temperature=0.2)
+
+    return code_v2
+
+
+def multi_agent_paper_comparison(paper1_text: str, paper2_text: str, aspect: str) -> str:
+    """
+    REAL MULTI-AGENT COMMUNICATION:
+    Controller → Search Agent (extract info) → Analysis Agent (compare)
+    """
+
+    # Step 1: Search Agent extracts key info from both papers
+    extract_task_1 = f"""
+Extract key information from this CNN paper abstract focusing on {aspect}:
+
+{paper1_text[:1000]}
+
+Provide:
+- Main CNN architecture
+- Methodology related to {aspect}
+- Key results
+- Unique contributions
+"""
+
+    extract_task_2 = f"""
+Extract key information from this CNN paper abstract focusing on {aspect}:
+
+{paper2_text[:1000]}
+
+Provide:
+- Main CNN architecture
+- Methodology related to {aspect}
+- Key results
+- Unique contributions
+"""
+
+    info_1 = groq_chat(extract_task_1, temperature=0.3)
+    info_2 = groq_chat(extract_task_2, temperature=0.3)
+
+    # Step 2: Analysis Agent compares
+    comparison_task = f"""
+Compare these two CNN papers focusing on {aspect}:
+
+Paper 1 Information:
+{info_1}
+
+Paper 2 Information:
+{info_2}
+
+Provide a structured comparison:
+
+### Similarities
+[List key similarities]
+
+### Differences
+[List key differences]
+
+### Strengths of Paper 1
+[Specific strengths]
+
+### Strengths of Paper 2
+[Specific strengths]
+
+### Recommendation
+[Which is better for what use case]
+"""
+
+    comparison = groq_chat(comparison_task, temperature=0.3)
+
+    return comparison
+
+
+# ============================================================
+# 7. SINGLE-AGENT FALLBACK FUNCTIONS (for compatibility)
 # ============================================================
 
 def generate_paper_report(paper: dict) -> str:
+    """Generate structured report from paper metadata"""
+
     title = paper.get("title", "")
     authors = ", ".join(paper.get("authors", []))
     year = paper.get("year", "")
     venue = paper.get("venue", "")
     citations = paper.get("citations", 0)
-
-    raw_abs = paper.get("abstract")
-    abstract = (raw_abs if isinstance(raw_abs, str) else "").strip()
-
-    if not abstract:
-        abstract = "The source provides no abstract for this paper."
+    abstract = paper.get("abstract", "No abstract available")
 
     prompt = f"""
-Produce a **clean academic report** for this paper.
+Generate a comprehensive research report for this CNN paper:
 
-Paper Title: {title}
+Title: {title}
 Authors: {authors}
 Year: {year}
 Venue: {venue}
@@ -385,240 +519,116 @@ Citations: {citations}
 Abstract:
 {abstract}
 
-Write the report with these sections:
+Create a report with these sections:
 
 1. Executive Summary
-2. Key Contributions
-3. Methodology
-4. Strengths
-5. Limitations
-6. Applications
-7. Future Work
+2. CNN Architecture Overview
+3. Key Contributions
+4. Methodology
+5. Strengths
+6. Limitations
+7. Applications in Deep Learning
+8. Future Research Directions
 
-Rules:
-- If the abstract lacks detail, write naturally
-- Do NOT invent details
+Be specific about CNN-related aspects.
 """
 
     return groq_chat(prompt, temperature=0.35)
 
 
-# ============================================================
-# 7. PAPER Q&A (ORIGINAL VERSION)
-# ============================================================
-
 def answer_question_about_selected_paper(paper: dict, question: str, history=None):
-    raw_abs = paper.get("abstract")
-    abstract = (raw_abs if isinstance(raw_abs, str) else "").strip()
+    """Fallback: Direct answer without multi-agent (for simple queries)"""
 
+    abstract = paper.get("abstract", "")
     if not abstract:
-        return "The abstract does not contain any information to answer this question."
+        return "No abstract available to answer this question."
 
     title = paper.get("title", "")
-    authors = ", ".join(paper.get("authors", []))
 
     prompt = f"""
-Answer the user's question using ONLY the abstract.
+Answer this question about a CNN research paper using ONLY the abstract:
 
-Paper Title: {title}
-Authors: {authors}
+Paper: {title}
+Abstract: {abstract}
 
-Abstract:
-{abstract}
+Question: {question}
 
-Question:
-{question}
-
-If the answer is not in the abstract:
-Reply ONLY with:
-"The abstract does not mention this information."
+If the answer is not in the abstract, say: "Information not available in the abstract."
 """
 
     return groq_chat(prompt, conversation_history=history, temperature=0.2)
 
 
-# ============================================================
-# 8. ENHANCED COLLABORATIVE FUNCTIONS
-# ============================================================
-
-def enhanced_paper_qa(paper, user_question):
-    """
-    Multi-agent collaboration for paper analysis
-    Shows improvement over epochs
-    """
-
-    # Step 1: Search agent extracts key info
-    search_prompt = f"""
-    Analyze this paper and extract key information:
-    Title: {paper.get('title', '')}
-    Abstract: {paper.get('abstract', '')[:1000]}
-
-    Provide: main topic, methodology, and key findings.
-    """
-
-    result1 = groq_chat(search_prompt, track_performance=True, agent_name='search_agent')
-
-    # Step 2: QA agent answers using search agent's output
-    qa_prompt = f"""
-    Based on this analysis:
-    {result1}
-
-    Now answer this question: {user_question}
-    """
-
-    result2 = groq_chat(qa_prompt, track_performance=True, agent_name='qa_agent')
-
-    # Step 3: Refinement pass (shows improvement)
-    refined_prompt = f"""
-    Previous answer: {result2}
-
-    Refine this answer to be more precise and add any missing details.
-    """
-
-    final_result = groq_chat(refined_prompt, track_performance=True, agent_name='qa_agent')
-
-    return final_result
-
-
-def enhanced_code_gen(task, language):
-    """
-    Multi-agent code generation with review and refinement
-    """
-
-    # Initial generation
-    prompt1 = f"Write {language} code for: {task}"
-    code_v1 = groq_chat(prompt1, temperature=0.2, track_performance=True, agent_name='code_agent')
-
-    # QA agent reviews
-    review_prompt = f"""
-    Review this code and suggest improvements:
-    {code_v1[:1000]}
-
-    Check for: efficiency, error handling, best practices.
-    """
-
-    review = groq_chat(review_prompt, track_performance=True, agent_name='qa_agent')
-
-    # Code agent refines based on review
-    refine_prompt = f"""
-    Original code:
-    {code_v1}
-
-    Review feedback:
-    {review}
-
-    Generate improved version incorporating this feedback.
-    """
-
-    code_v2 = groq_chat(refine_prompt, temperature=0.2, track_performance=True, agent_name='code_agent')
-
-    return code_v2
-
-
-# ============================================================
-# 9. GENERAL CHATBOT
-# ============================================================
-
 def chatbot_answer(prompt, history=None):
+    """General chatbot for CNN research questions"""
     return groq_chat(prompt, conversation_history=history)
 
 
-# ============================================================
-# 10. CODE GENERATOR (ORIGINAL)
-# ============================================================
-
 def generate_advanced_code(instruction: str, language: str = "python") -> str:
+    """Fallback: Direct code generation"""
+
     prompt = f"""
-Write {language} code for:
+Write {language} code for this CNN-related task:
 
 {instruction}
 
-Rules:
-- ONLY code (no explanation)
-- Include comments
-- Use clean structure
-- Handle errors gracefully
+Requirements:
+- Production-ready code
+- Comments explaining CNN architecture
+- Proper error handling
+- Deep learning best practices
+
+Output ONLY code:
 """
 
-    result = groq_chat(prompt, temperature=0.2)
-    return result.strip()
+    return groq_chat(prompt, temperature=0.2).strip()
 
-
-# ============================================================
-# 11. PAPER COMPARISON
-# ============================================================
 
 def compare_two_papers_rag(text1, text2, aspect):
+    """Fallback: Direct comparison"""
+
     prompt = f"""
-Compare two papers based on: {aspect}
+Compare these two CNN papers based on {aspect}:
 
-Paper 1:
-{text1[:4000]}
+Paper 1 Abstract:
+{text1[:2000]}
 
-Paper 2:
-{text2[:4000]}
+Paper 2 Abstract:
+{text2[:2000]}
 
-Write the comparison:
+Provide structured comparison:
 
 ### Similarities
-### Differences
+### Differences  
 ### Strengths of Paper 1
 ### Strengths of Paper 2
-### Final Verdict
+### Recommendation
 """
 
     return groq_chat(prompt, temperature=0.3)
 
 
-# ============================================================
-# 12. PDF SUMMARY
-# ============================================================
-
 def generate_pdf_summary_report(full_text: str) -> str:
-    if not isinstance(full_text, str) or len(full_text.strip()) == 0:
-        return "The PDF text is empty or unreadable."
+    """Generate summary from PDF text"""
+
+    if not full_text or len(full_text.strip()) == 0:
+        return "PDF text is empty or unreadable."
 
     prompt = f"""
-Summarize the following PDF text into a clean report.
+Summarize this CNN research paper:
 
-Text:
 {full_text[:8000]}
 
-Write the report using these sections:
+Create a structured summary:
 
 1. Executive Summary
-2. Key Points
-3. Important Definitions
-4. Important Examples (if available)
-5. Conclusion
+2. CNN Architecture Details
+3. Key Findings
+4. Methodology
+5. Experimental Results
+6. Conclusions
 
-Rules:
-- Write in clear, concise academic format
-- Do NOT mention missing text
+Focus on CNN-specific aspects.
 """
 
     return groq_chat(prompt, temperature=0.35)
-
-
-# ============================================================
-# 13. PERFORMANCE TRACKING FUNCTIONS
-# ============================================================
-
-def get_performance_stats():
-    """Get current performance statistics"""
-    improvement = performance_tracker.calculate_improvement()
-
-    stats = {
-        'total_interactions': performance_tracker.interaction_count,
-        'avg_quality': sum(performance_tracker.accuracy_scores) / len(
-            performance_tracker.accuracy_scores) if performance_tracker.accuracy_scores else 0,
-        'improvement_percentage': improvement,
-        'total_epochs': len(performance_tracker.epochs)
-    }
-
-    return stats
-
-
-def save_performance_graph():
-    """Generate and save performance visualization"""
-    return performance_tracker.plot_performance()
