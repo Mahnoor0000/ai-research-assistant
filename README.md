@@ -1,19 +1,18 @@
 
 # AI Research Assistant
 
-A modular, multi-agent AI research assistant designed to streamline academic workflows including paper discovery, document-grounded Q&A, structured reporting, PDF summarization, and code generation.
+An AI research assistant designed to streamline academic workflows including paper discovery, document-grounded Q&A, structured reporting, PDF summarization, and code generation.
 
 ---
 
 ## 🚀 Overview
 
-This system integrates LLM reasoning, multi-source academic search, and retrieval-augmented generation (RAG) into a clean architecture using Groq-hosted LLaMA models and AutoGen agents.
+This system integrates LLM reasoning, multi-source academic search  into a clean architecture using Groq-hosted LLaMA models.
 
 The assistant prioritizes:
 
 * Context-grounded answers
 * Structured academic outputs
-* Reliable task orchestration
 * Clean modular design
 
 ---
@@ -43,7 +42,7 @@ Strict no-hallucination rules.
 
 ---
 
-### 📚 PDF-Based RAG Q&A
+### 📚 PDF-Based Q&A
 
 * Extracts and cleans PDF text using PyPDF2
 * Chunk-based segmentation
@@ -74,18 +73,7 @@ Compares two papers across:
 
 ---
 
-### 🤖 Multi-Agent Architecture
 
-Built using AutoGen:
-
-* Controller Agent
-* Search Agent
-* QA Agent
-* Code Agent
-
-Docker-free configuration for lightweight deployment.
-
----
 
 ## 🛠️ Tech Stack
 
